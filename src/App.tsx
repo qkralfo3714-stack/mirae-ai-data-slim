@@ -21,6 +21,7 @@ import {
 type Cell = string | number | boolean | null;
 type DataRow = Record<string, Cell>;
 type RowLimit = 1000 | 5000 | "all";
+type ExportMode = "standard" | "source";
 
 const SPLIT_BYTES = 3 * 1024 * 1024;
 const encoder = new TextEncoder();
@@ -67,39 +68,42 @@ function splitByUtf8(text: string, maxBytes: number) {
   return pieces;
 }
 
-function makeTextParts(rows: DataRow[], columns: string[]) {
+function makeTextParts(rows: DataRow[], columns: string[], exportMode: ExportMode) {
   const parts: string[] = [];
-  let current = "";
-  let currentBytes = 0;
+  const sourceIntro = exportMode === "source"
+    ? "# 역사 사료 해석 자료\n\n아래 원문을 바탕으로 한글 독음, 현대어 풀이, 핵심 역사 개념을 작성해 주세요. 확실하지 않은 내용은 추측하지 말고 ‘확인 필요’로 표시해 주세요.\n\n"
+    : "";
+  let current = sourceIntro;
+  let currentBytes = encoder.encode(current).length;
 
-  rows.forEach((row) => {
-    const line = `${columns
-      .map((column) => `${column}: ${normalizeValue(row[column])}`)
-      .join(", ")}\n`;
+  rows.forEach((row, index) => {
+    const line = exportMode === "source"
+      ? `## 사료 ${index + 1}\n\n### 원문\n${columns.map((column) => `- ${column}: ${normalizeValue(row[column])}`).join("\n")}\n\n### 해석 보조 틀\n- 한글 독음: [ChatGPT가 확인]\n- 현대어 풀이: [ChatGPT가 작성]\n- 핵심 역사 개념: [ChatGPT가 정리]\n- 확인이 필요한 부분: [없음 또는 확인 필요]\n\n`
+      : `${columns.map((column) => `${column}: ${normalizeValue(row[column])}`).join(", ")}\n`;
     const lineBytes = encoder.encode(line).length;
 
     if (lineBytes > SPLIT_BYTES) {
-      if (current) {
+      if (current !== sourceIntro) {
         parts.push(current);
-        current = "";
-        currentBytes = 0;
+        current = sourceIntro;
+        currentBytes = encoder.encode(current).length;
       }
-      parts.push(...splitByUtf8(line, SPLIT_BYTES));
+      splitByUtf8(line, SPLIT_BYTES - currentBytes).forEach((piece) => parts.push(`${sourceIntro}${piece}`));
       return;
     }
 
-    if (currentBytes + lineBytes > SPLIT_BYTES && current) {
+    if (currentBytes + lineBytes > SPLIT_BYTES && current !== sourceIntro) {
       parts.push(current);
-      current = line;
-      currentBytes = lineBytes;
+      current = `${sourceIntro}${line}`;
+      currentBytes = encoder.encode(current).length;
     } else {
       current += line;
       currentBytes += lineBytes;
     }
   });
 
-  if (current) parts.push(current);
-  return parts.length ? parts : [""];
+  if (current !== sourceIntro || !parts.length) parts.push(current);
+  return parts;
 }
 
 function downloadBlob(blob: Blob, fileName: string) {
@@ -121,6 +125,7 @@ export default function Home() {
   const [columns, setColumns] = useState<string[]>([]);
   const [selectedColumns, setSelectedColumns] = useState<Set<string>>(new Set());
   const [rowLimit, setRowLimit] = useState<RowLimit>(1000);
+  const [exportMode, setExportMode] = useState<ExportMode>("standard");
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState<"idle" | "reading" | "ready" | "converting">("idle");
   const [error, setError] = useState("");
@@ -255,8 +260,8 @@ export default function Home() {
 
     try {
       await new Promise<void>((resolve) => setTimeout(resolve, 40));
-      const parts = makeTextParts(outputRows, chosenColumns);
-      const baseName = `${safeBaseName(file.name)}_AI학습용`;
+      const parts = makeTextParts(outputRows, chosenColumns, exportMode);
+      const baseName = `${safeBaseName(file.name)}_${exportMode === "source" ? "사료해석용" : "AI학습용"}`;
 
       if (parts.length === 1) {
         downloadBlob(new Blob([parts[0]], { type: "text/plain;charset=utf-8" }), `${baseName}.txt`);
@@ -412,6 +417,20 @@ export default function Home() {
               <h2>변환 범위를 정해요</h2>
               <p>AI가 빠르게 읽도록 필요한 만큼만 남겨보세요.</p>
 
+              <fieldset className="export-mode">
+                <legend>내보내기 방식</legend>
+                <label className={exportMode === "standard" ? "radio-option selected" : "radio-option"}>
+                  <input type="radio" name="exportMode" checked={exportMode === "standard"} onChange={() => setExportMode("standard")} />
+                  <span className="radio-dot" />
+                  <span><strong>기본 AI 학습용</strong><small>항목: 값 형식의 간단한 TXT</small></span>
+                </label>
+                <label className={exportMode === "source" ? "radio-option selected" : "radio-option"}>
+                  <input type="radio" name="exportMode" checked={exportMode === "source"} onChange={() => setExportMode("source")} />
+                  <span className="radio-dot" />
+                  <span><strong>역사 사료 해석용</strong><small>원문과 해석 보조 틀을 함께 만들기</small></span>
+                </label>
+              </fieldset>
+
               <fieldset>
                 <legend>남길 행 수</legend>
                 {[
@@ -434,10 +453,11 @@ export default function Home() {
 
               <div className="format-box">
                 <span><Info size={16} /> 변환 예시</span>
-                <code>지역: 서울, 학교급: 중학교, 학생수: 320</code>
+                <code>{exportMode === "source" ? "원문: 大韓帝國 · 한글 독음: [확인] · 현대어 풀이: [작성]" : "지역: 서울, 학교급: 중학교, 학생수: 320"}</code>
               </div>
 
               <div className="summary-box">
+                <div><span>내보내기 방식</span><strong>{exportMode === "source" ? "사료 해석용" : "기본 AI 학습용"}</strong></div>
                 <div><span>변환할 데이터</span><strong>{outputRows.length.toLocaleString()}개 행</strong></div>
                 <div><span>선택한 열</span><strong>{chosenColumns.length}개</strong></div>
                 <div><span>파일 분할</span><strong>3MB 단위</strong></div>
@@ -449,7 +469,7 @@ export default function Home() {
                 disabled={!chosenColumns.length || status === "converting"}
                 onClick={() => void convertAndDownload()}
               >
-                {status === "converting" ? <><LoaderCircle className="spin" size={20} /> 변환하는 중...</> : <><Download size={20} /> TXT로 변환해 다운로드</>}
+                {status === "converting" ? <><LoaderCircle className="spin" size={20} /> 변환하는 중...</> : <><Download size={20} /> {exportMode === "source" ? "사료 해석용 TXT 다운로드" : "TXT로 변환해 다운로드"}</>}
               </button>
               <p className="download-note"><FileArchive size={14} /> 파일이 3MB를 넘으면 ZIP으로 묶어드려요.</p>
               <button className="reset-button" type="button" onClick={resetData}><RefreshCcw size={15} /> 다른 파일로 시작하기</button>
