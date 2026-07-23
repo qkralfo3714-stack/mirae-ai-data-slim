@@ -50,7 +50,7 @@ function parseHistoryXml(xmlText: string) {
     throw new Error("XML 문법을 확인할 수 없습니다. 원본 파일이 손상되지 않았는지 확인해 주세요.");
   }
 
-  const records = Array.from(xmlDocument.querySelectorAll("level3[id]"));
+  const records = Array.from(xmlDocument.getElementsByTagName("level3")).filter((record) => record.hasAttribute("id"));
   if (!records.length) {
     throw new Error("이 XML에서는 사료 항목(level3)을 찾지 못했습니다.");
   }
