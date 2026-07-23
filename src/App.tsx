@@ -170,7 +170,7 @@ export default function Home() {
         Papa.parse<DataRow>(nextFile, {
           header: true,
           skipEmptyLines: "greedy",
-          worker: true,
+          worker: false,
           complete: (result) => {
             try {
               if (result.errors.length && !result.data.length) {
@@ -313,8 +313,8 @@ export default function Home() {
               {status === "reading" ? (
                 <>
                   <div className="upload-icon loading"><LoaderCircle size={34} /></div>
-                  <h2>데이터를 차근차근 읽고 있어요</h2>
-                  <p>파일 크기에 따라 잠시 시간이 걸릴 수 있습니다.</p>
+                  <h2>데이터를 읽고 있어요</h2>
+                  <p>잠시만 기다려 주세요. 대용량 파일도 안정적으로 처리합니다.</p>
                 </>
               ) : (
                 <>
