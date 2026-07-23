@@ -33,7 +33,75 @@ function readableBytes(bytes: number) {
 }
 
 function safeBaseName(name: string) {
-  return name.replace(/\.(csv|xlsx)$/i, "").replace(/[\\/:*?"<>|]/g, "_");
+  return name.replace(/\.(csv|xlsx|xml)$/i, "").replace(/[\\/:*?"<>|]/g, "_");
+}
+
+function cleanXmlText(value: string | null | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function uniqueXmlValues(elements: Element[]) {
+  return [...new Set(elements.map((element) => cleanXmlText(element.textContent)).filter(Boolean))];
+}
+
+function parseHistoryXml(xmlText: string) {
+  const xmlDocument = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (xmlDocument.querySelector("parsererror")) {
+    throw new Error("XML 문법을 확인할 수 없습니다. 원본 파일이 손상되지 않았는지 확인해 주세요.");
+  }
+
+  const records = Array.from(xmlDocument.querySelectorAll("level3[id]"));
+  if (!records.length) {
+    throw new Error("이 XML에서는 사료 항목(level3)을 찾지 못했습니다.");
+  }
+
+  const documentTitle = cleanXmlText(
+    xmlDocument.querySelector("level1 > front > biblioData > title > mainTitle")?.textContent,
+  );
+  const sectionTitle = cleanXmlText(
+    xmlDocument.querySelector("level2 > front > biblioData > title > mainTitle")?.textContent,
+  );
+
+  const rows: DataRow[] = records.map((record) => {
+    const title = cleanXmlText(
+      record.querySelector("front biblioData > title > mainTitle")?.textContent,
+    );
+    const originalText = Array.from(record.querySelectorAll("text content paragraph"))
+      .map((paragraph) => cleanXmlText(paragraph.textContent))
+      .filter(Boolean)
+      .join("\n");
+
+    const sources = Array.from(record.querySelectorAll("front biblioData > source"))
+      .map((source) => {
+        const sourceTitle = cleanXmlText(source.querySelector("mainTitle")?.textContent);
+        const page = source.querySelector("page")?.getAttribute("begin") ?? "";
+        return [sourceTitle, page].filter(Boolean).join(" · ");
+      })
+      .filter(Boolean);
+
+    const subjects = uniqueXmlValues(Array.from(record.querySelectorAll("front biblioData > subjectClass")));
+    const people = uniqueXmlValues(Array.from(record.querySelectorAll('text index[type="이름"]')));
+    const places = uniqueXmlValues(Array.from(record.querySelectorAll('text index[type="지명"]')));
+    const eras = uniqueXmlValues(Array.from(record.querySelectorAll('text index[type="연호"]')));
+
+    return {
+      "사료 ID": record.getAttribute("id") ?? "",
+      "문헌명": documentTitle,
+      "편명": sectionTitle,
+      "한국어 제목": title,
+      "한문 원문": originalText,
+      "출전": sources.join(" / "),
+      "주제 분류": subjects.join(", "),
+      "관련 인물": people.join(", "),
+      "관련 지명": places.join(", "),
+      "연호": eras.join(", "),
+    };
+  });
+
+  return {
+    rows,
+    columns: ["사료 ID", "문헌명", "편명", "한국어 제목", "한문 원문", "출전", "주제 분류", "관련 인물", "관련 지명", "연호"],
+  };
 }
 
 function normalizeValue(value: Cell | undefined) {
@@ -162,8 +230,8 @@ export default function Home() {
 
   async function parseFile(nextFile: File) {
     const extension = nextFile.name.split(".").pop()?.toLowerCase();
-    if (!extension || !["csv", "xlsx"].includes(extension)) {
-      setError("CSV 또는 XLSX 파일만 올릴 수 있어요.");
+    if (!extension || !["csv", "xlsx", "xml"].includes(extension)) {
+      setError("CSV, XLSX 또는 XML 파일만 올릴 수 있어요.");
       return;
     }
 
@@ -202,6 +270,10 @@ export default function Home() {
             setStatus("idle");
           },
         });
+      } else if (extension === "xml") {
+        const xmlText = await nextFile.text();
+        const parsed = parseHistoryXml(xmlText);
+        loadParsedRows(parsed.rows, parsed.columns, nextFile, "역사 사료 XML");
       } else {
         const XLSX = await import("xlsx");
         const arrayBuffer = await nextFile.arrayBuffer();
@@ -296,7 +368,7 @@ export default function Home() {
         <div className="hero-inner">
           <div className="eyebrow"><Sparkles size={15} /> 교사를 위한 공공데이터 변환 도구</div>
           <h1>무거운 공공데이터를<br /><em>AI가 읽기 좋은 자료</em>로.</h1>
-          <p>CSV·엑셀 파일에서 필요한 열과 행만 골라 NotebookLM, ChatGPT, Gems용 텍스트로 가볍게 바꿔보세요.</p>
+          <p>CSV·엑셀·XML 파일에서 필요한 열과 행만 골라 NotebookLM, ChatGPT, Gems용 텍스트로 가볍게 바꿔보세요.</p>
           <div className="flow" aria-label="사용 순서">
             <span className="active"><b>1</b> 파일 올리기</span><ChevronRight />
             <span className={file ? "active" : ""}><b>2</b> 데이터 고르기</span><ChevronRight />
@@ -329,14 +401,14 @@ export default function Home() {
                   <button className="primary-button" type="button" onClick={() => inputRef.current?.click()}>
                     <FileSpreadsheet size={18} /> 파일 선택하기
                   </button>
-                  <small>지원 형식 · CSV, XLSX</small>
+                  <small>지원 형식 · CSV, XLSX, XML</small>
                 </>
               )}
               <input
                 ref={inputRef}
                 className="sr-only"
                 type="file"
-                accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                accept=".csv,.xlsx,.xml,text/csv,application/xml,text/xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={handleInput}
               />
             </div>
