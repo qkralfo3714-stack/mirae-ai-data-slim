@@ -479,6 +479,60 @@ td {
 .radio-option strong { font-size: 11px; font-weight: 500; }
 .radio-option small { color: #8b97a4; font-size: 9px; }
 
+.history-prompt-box {
+  margin: -4px 0 20px;
+  padding: 13px;
+  border: 1px solid #cfe1f5;
+  border-radius: 11px;
+  background: #f4f9ff;
+}
+.history-prompt-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.history-prompt-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #315f91;
+  font-size: 10px;
+  font-weight: 500;
+}
+.history-prompt-heading button {
+  padding: 7px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #b8d3ef;
+  border-radius: 7px;
+  color: #2468ad;
+  background: #fff;
+  font-family: inherit;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.history-prompt-heading button:hover {
+  border-color: var(--blue);
+  background: #eaf4ff;
+}
+.history-prompt-box pre {
+  max-height: 190px;
+  margin: 10px 0 0;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: keep-all;
+  border: 1px solid #dce8f4;
+  border-radius: 8px;
+  color: #48627c;
+  background: #fff;
+  font-family: "Aggravo", sans-serif;
+  font-size: 9px;
+  line-height: 1.7;
+}
+
 .format-box {
   padding: 13px;
   border-radius: 10px;
