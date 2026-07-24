@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import {
   Check,
   ChevronRight,
+  Copy,
   Database,
   Download,
   FileArchive,
@@ -25,6 +26,12 @@ type ExportMode = "standard" | "source";
 
 const SPLIT_BYTES = 3 * 1024 * 1024;
 const encoder = new TextEncoder();
+const HISTORY_SOURCE_PROMPT = `아래 역사 자료를 읽고,
+1. 한자 원문은 그대로 유지하고
+2. 한글 독음을 확인·보완하고
+3. 중학생이 이해할 수 있는 현대어 풀이를 작성해 줘.
+표 형식으로 ‘원문 / 독음 / 현대어 풀이 / 핵심 역사 개념’ 순서로 정리해 줘.
+확실하지 않은 독음이나 뜻은 추측하지 말고 ‘확인 필요’라고 표시해 줘.`;
 
 function readableBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -194,6 +201,7 @@ export default function Home() {
   const [selectedColumns, setSelectedColumns] = useState<Set<string>>(new Set());
   const [rowLimit, setRowLimit] = useState<RowLimit>(1000);
   const [exportMode, setExportMode] = useState<ExportMode>("standard");
+  const [promptCopied, setPromptCopied] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState<"idle" | "reading" | "ready" | "converting">("idle");
   const [error, setError] = useState("");
@@ -314,6 +322,16 @@ export default function Home() {
 
   function handleInput(event: ChangeEvent<HTMLInputElement>) {
     handleFiles(event.target.files);
+  }
+
+  async function copyHistoryPrompt() {
+    try {
+      await navigator.clipboard.writeText(HISTORY_SOURCE_PROMPT);
+      setPromptCopied(true);
+      window.setTimeout(() => setPromptCopied(false), 1800);
+    } catch {
+      setError("프롬프트를 복사하지 못했습니다. 브라우저의 클립보드 권한을 확인해 주세요.");
+    }
   }
 
   function toggleColumn(column: string) {
@@ -502,6 +520,18 @@ export default function Home() {
                   <span><strong>역사 사료 해석용</strong><small>원문과 해석 보조 틀을 함께 만들기</small></span>
                 </label>
               </fieldset>
+
+              {exportMode === "source" && (
+                <div className="history-prompt-box">
+                  <div className="history-prompt-heading">
+                    <span><Sparkles size={15} /> ChatGPT 해석 프롬프트</span>
+                    <button type="button" onClick={() => void copyHistoryPrompt()}>
+                      {promptCopied ? <><Check size={14} /> 복사 완료</> : <><Copy size={14} /> 클립보드로 복사</>}
+                    </button>
+                  </div>
+                  <pre>{HISTORY_SOURCE_PROMPT}</pre>
+                </div>
+              )}
 
               <fieldset>
                 <legend>남길 행 수</legend>
