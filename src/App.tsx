@@ -40,7 +40,7 @@ function readableBytes(bytes: number) {
 }
 
 function safeBaseName(name: string) {
-  return name.replace(/\.(csv|xlsx|xml)$/i, "").replace(/[\\/:*?"<>|]/g, "_");
+  return name.replace(/\.(csv|xlsx|xml|txt|json|jsonl|ndjson)$/i, "").replace(/[\\/:*?"<>|]/g, "_");
 }
 
 function cleanXmlText(value: string | null | undefined) {
@@ -108,6 +108,108 @@ function parseHistoryXml(xmlText: string) {
   return {
     rows,
     columns: ["사료 ID", "문헌명", "편명", "한국어 제목", "한문 원문", "출전", "주제 분류", "관련 인물", "관련 지명", "연호"],
+  };
+}
+
+function flattenJsonRecord(value: unknown, prefix = "", target: DataRow = {}) {
+  const key = prefix || "값";
+
+  if (value === null || value === undefined) {
+    target[key] = null;
+    return target;
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    target[key] = value;
+    return target;
+  }
+
+  if (Array.isArray(value)) {
+    const isSimpleArray = value.every(
+      (item) => item === null || ["string", "number", "boolean"].includes(typeof item),
+    );
+    target[key] = isSimpleArray
+      ? value.map((item) => item ?? "").join(", ")
+      : JSON.stringify(value);
+    return target;
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (!entries.length) {
+      target[key] = "";
+      return target;
+    }
+    entries.forEach(([childKey, childValue]) => {
+      flattenJsonRecord(childValue, prefix ? `${prefix}.${childKey}` : childKey, target);
+    });
+  }
+
+  return target;
+}
+
+function parseJsonText(text: string) {
+  const trimmed = text.replace(/^\uFEFF/, "").trim();
+  if (!trimmed) throw new Error("JSON 파일에 내용이 없습니다.");
+
+  let parsed: unknown;
+  let sourceName = "JSON";
+
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    try {
+      parsed = lines.map((line) => JSON.parse(line));
+      sourceName = "JSON Lines";
+    } catch {
+      throw new Error("JSON 문법을 읽지 못했습니다. 괄호나 쉼표가 올바른지 확인해 주세요.");
+    }
+  }
+
+  let items: unknown[];
+  if (Array.isArray(parsed)) {
+    items = parsed;
+  } else if (parsed && typeof parsed === "object") {
+    const arrayEntries = Object.entries(parsed as Record<string, unknown>)
+      .filter((entry): entry is [string, unknown[]] => Array.isArray(entry[1]))
+      .sort((a, b) => b[1].length - a[1].length);
+    if (arrayEntries.length) {
+      items = arrayEntries[0][1];
+      sourceName = `JSON · ${arrayEntries[0][0]}`;
+    } else {
+      items = [parsed];
+    }
+  } else {
+    items = [parsed];
+  }
+
+  if (!items.length) throw new Error("JSON 파일에서 변환할 항목을 찾지 못했습니다.");
+
+  const rows = items.map((item) => flattenJsonRecord(item));
+  const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+  if (!columns.length) throw new Error("JSON 파일에서 열 이름을 만들지 못했습니다.");
+
+  return { rows, columns, sourceName };
+}
+
+function parsePlainText(text: string) {
+  const trimmed = text.replace(/^\uFEFF/, "").trim();
+  if (!trimmed) throw new Error("TXT 파일에 내용이 없습니다.");
+
+  const normalized = trimmed.replace(/\r\n?/g, "\n");
+  let blocks = normalized
+    .split(/\n[\t ]*\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  if (blocks.length === 1) {
+    blocks = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
+  }
+
+  return {
+    rows: blocks.map((content, index) => ({ "번호": index + 1, "내용": content })),
+    columns: ["번호", "내용"],
   };
 }
 
@@ -238,8 +340,9 @@ export default function Home() {
 
   async function parseFile(nextFile: File) {
     const extension = nextFile.name.split(".").pop()?.toLowerCase();
-    if (!extension || !["csv", "xlsx", "xml"].includes(extension)) {
-      setError("CSV, XLSX 또는 XML 파일만 올릴 수 있어요.");
+    const supportedExtensions = ["csv", "xlsx", "xml", "txt", "json", "jsonl", "ndjson"];
+    if (!extension || !supportedExtensions.includes(extension)) {
+      setError("CSV, XLSX, XML, TXT 또는 JSON 파일만 올릴 수 있어요.");
       return;
     }
 
@@ -282,6 +385,12 @@ export default function Home() {
         const xmlText = await nextFile.text();
         const parsed = parseHistoryXml(xmlText);
         loadParsedRows(parsed.rows, parsed.columns, nextFile, "역사 사료 XML");
+      } else if (extension === "txt") {
+        const parsed = parsePlainText(await nextFile.text());
+        loadParsedRows(parsed.rows, parsed.columns, nextFile, "텍스트 문단");
+      } else if (["json", "jsonl", "ndjson"].includes(extension)) {
+        const parsed = parseJsonText(await nextFile.text());
+        loadParsedRows(parsed.rows, parsed.columns, nextFile, parsed.sourceName);
       } else {
         const XLSX = await import("xlsx");
         const arrayBuffer = await nextFile.arrayBuffer();
@@ -386,7 +495,7 @@ export default function Home() {
         <div className="hero-inner">
           <div className="eyebrow"><Sparkles size={15} /> 교사를 위한 공공데이터 변환 도구</div>
           <h1>무거운 공공데이터를<br /><em>AI가 읽기 좋은 자료</em>로.</h1>
-          <p>CSV·엑셀·XML 파일에서 필요한 열과 행만 골라 NotebookLM, ChatGPT, Gems용 텍스트로 가볍게 바꿔보세요.</p>
+          <p>CSV·엑셀·XML·TXT·JSON 파일에서 필요한 열과 행만 골라 NotebookLM, ChatGPT, Gems용 텍스트로 가볍게 바꿔보세요.</p>
           <div className="flow" aria-label="사용 순서">
             <span className="active"><b>1</b> 파일 올리기</span><ChevronRight />
             <span className={file ? "active" : ""}><b>2</b> 데이터 고르기</span><ChevronRight />
@@ -419,14 +528,14 @@ export default function Home() {
                   <button className="primary-button" type="button" onClick={() => inputRef.current?.click()}>
                     <FileSpreadsheet size={18} /> 파일 선택하기
                   </button>
-                  <small>지원 형식 · CSV, XLSX, XML</small>
+                  <small>지원 형식 · CSV, XLSX, XML, TXT, JSON</small>
                 </>
               )}
               <input
                 ref={inputRef}
                 className="sr-only"
                 type="file"
-                accept=".csv,.xlsx,.xml,text/csv,application/xml,text/xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                accept=".csv,.xlsx,.xml,.txt,.json,.jsonl,.ndjson,text/csv,text/plain,application/json,application/x-ndjson,application/xml,text/xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={handleInput}
               />
             </div>
